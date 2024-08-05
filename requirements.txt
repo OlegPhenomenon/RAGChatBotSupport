@@ -1,0 +1,12 @@
+psycopg2
+flask
+langchain
+openai
+groq
+langchain-openai
+langchain-text-splitters
+langchain-community
+deeplake
+python-dotenv
+fastapi
+uvicorn

@@ -7,7 +7,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 persist_directory = "portfolio_db"
-headers_on_split = [("##")]
+headers_on_split = [
+    ("##", "Header 2"),
+    ("#", "Header 1"),
+    ("###", "Header 3"),
+    ("####", "Header 4")
+]
 markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_on_split, strip_headers=False)
 
 def process_file(file_path):

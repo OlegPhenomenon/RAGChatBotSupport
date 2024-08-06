@@ -1,17 +1,20 @@
 from groq import Groq
-from langchain.vectorstores import DeepLake
+# from langchain.vectorstores import DeepLake
 from langchain.vectorstores import Chroma
 from langchain.embeddings.openai import OpenAIEmbeddings
 import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+import logging
 
 load_dotenv()
 
 TOKEN_LIMIT = 4096
 
 app = FastAPI()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 client = Groq(
   api_key=os.getenv("GROQ_API_KEY")
@@ -36,8 +39,12 @@ dialog_history = []
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(chat_input: ChatInput):
+  logger.info(f"Received chat input: {chat_input}")
+
   user_input = chat_input.message
   docs = db.similarity_search(user_input, k=3)
+
+  logger.info(f"Found {len(docs)} documents")
 
   if len(docs) == 0:
     return ChatResponse(response="I'm sorry, I don't have that information. But you can send a message to the email in the contact form.")
@@ -81,13 +88,19 @@ async def chat(chat_input: ChatInput):
     'content': message
   })
 
+  logger.info(f"Send message {message}")
+
   chat_completion = client.chat.completions.create(
     messages=dialog_history,
     model=models[1]
   )
   response = chat_completion.choices[0].message.content
 
+  logger.info(f"Received response {response}")
+
   # ----
+
+  logger.info(f"Send message {response} to critic")
   manager_message = manager_template.format(text=response)
   dialog_history.append({
     'role': 'user',
@@ -99,6 +112,8 @@ async def chat(chat_input: ChatInput):
     model=models[1]
   )
   response = chat_completion.choices[0].message.content
+
+  logger.info(f"Received response {response}")
   # ----
 
   

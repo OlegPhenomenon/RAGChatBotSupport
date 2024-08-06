@@ -1,5 +1,6 @@
 from groq import Groq
 from langchain.vectorstores import DeepLake
+from langchain.vectorstores import Chroma
 from langchain.embeddings.openai import OpenAIEmbeddings
 import os
 from dotenv import load_dotenv
@@ -17,10 +18,13 @@ client = Groq(
 )
 
 embeddings = OpenAIEmbeddings(model='text-embedding-ada-002')
-my_activeloop_org_id = "learningprocess123"
-my_activeloop_dataset_name = "my_dataset"
-dataset_path = f"hub://{my_activeloop_org_id}/{my_activeloop_dataset_name}"
-db = DeepLake(dataset_path=dataset_path, embedding_function=embeddings)
+# my_activeloop_org_id = "learningprocess123"
+# my_activeloop_dataset_name = "my_dataset"
+# dataset_path = f"hub://{my_activeloop_org_id}/{my_activeloop_dataset_name}"
+# db = DeepLake(dataset_path=dataset_path, embedding_function=embeddings)
+
+persist_directory = "portfolio_db"
+db = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
 
 class ChatInput(BaseModel):
   message: str
@@ -51,21 +55,52 @@ async def chat(chat_input: ChatInput):
     Answer:
   """
 
+  manager_template = """
+    You are an exceptional chatbot manager. Your task is to review the text provided by your subordinates. You need to check the grammar and content and correct it to a relevant version.
+
+    The happiness of our customers depends on the quality of the text, so make sure the text is clear and does not mix languages. If this happens, you should correct the text to convey the message to the customer clearly.
+
+    The text can be either in Russian or in English. If user asks in Russian, you must answer in Russian. If user asks in English, you must answer in English.
+    We are the technical support for the user, so it is important to communicate with them in a polite tone, with humor, and to provide comprehensive answers to their questions.
+
+    Please answer directly to the user's question. Do not invent stuff. Don't tell that you changed the text. Just provide the corrected text.
+    DON'T USE "Here is the corrected text:" or any other similar phrases. Use only direct text.
+
+    Subordinate's text: {text}
+
+    Corrected text:
+  """
+
   chunks_formatted = "\n".join([f"{i+1}. {doc.page_content}" for i, doc in enumerate(docs)])
   message = template.format(chunks_formatted=chunks_formatted, query=user_input)
+  models = ["gemma-7b-it", "llama3-70b-8192", "llama3-8b-8192", "mixtral-8x7b-32768", "llama-3.1-405b-reasoning"]
 
+  # ----
   dialog_history.append({
     'role': 'user',
     'content': message
   })
 
-  models = ["gemma-7b-it", "llama3-70b-8192", "llama3-8b-8192", "mixtral-8x7b-32768"]
   chat_completion = client.chat.completions.create(
     messages=dialog_history,
     model=models[1]
   )
-
   response = chat_completion.choices[0].message.content
+
+  # ----
+  manager_message = manager_template.format(text=response)
+  dialog_history.append({
+    'role': 'user',
+    'content': manager_message
+  })
+
+  chat_completion = client.chat.completions.create(
+    messages=dialog_history,
+    model=models[1]
+  )
+  response = chat_completion.choices[0].message.content
+  # ----
+
   
   dialog_history.append({
     'role': 'assistant',

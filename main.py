@@ -74,6 +74,12 @@ async def chat(chat_input: ChatInput):
     Please answer directly to the user's question. Do not invent stuff. Don't tell that you changed the text. Just provide the corrected text.
     DON'T USE "Here is the corrected text:" or any other similar phrases. Use only direct text.
 
+    Let's think step by step. First, let's check the text for grammar and content. If you see any mistakes, correct them. If the text is correct, you can leave it as it is.
+    If the text mixes languages, correct it to a relevant version. If you see that a foreign word has been added to a message in Russian, replace it with a Russian word.
+    If you see that a foreign word has been added to a message in English, replace it with an English word.
+
+    You should not mention your actions or what you did, just send the corrected version without any explanations.
+
     Subordinate's text: {text}
 
     Corrected text:

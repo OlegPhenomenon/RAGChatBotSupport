@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import logging
+from time import sleep
 
 load_dotenv()
 
@@ -100,7 +101,9 @@ async def chat(chat_input: ChatInput):
 
   # ----
 
-  logger.info(f"Send message {response} to critic")
+  sleep(2)
+
+  logger.info(f"Send message to critic: {response}")
   manager_message = manager_template.format(text=response)
   dialog_history.append({
     'role': 'user',

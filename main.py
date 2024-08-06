@@ -1,13 +1,12 @@
 from groq import Groq
-# from langchain.vectorstores import DeepLake
 from langchain.vectorstores import Chroma
 from langchain.embeddings.openai import OpenAIEmbeddings
 import os
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 import logging
-from time import sleep
+import asyncio
 
 load_dotenv()
 
@@ -18,39 +17,43 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 client = Groq(
-  api_key=os.getenv("GROQ_API_KEY")
+    api_key=os.getenv("GROQ_API_KEY")
 )
 
 embeddings = OpenAIEmbeddings(model='text-embedding-ada-002')
-# my_activeloop_org_id = "learningprocess123"
-# my_activeloop_dataset_name = "my_dataset"
-# dataset_path = f"hub://{my_activeloop_org_id}/{my_activeloop_dataset_name}"
-# db = DeepLake(dataset_path=dataset_path, embedding_function=embeddings)
-
 persist_directory = "portfolio_db"
 db = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
 
 class ChatInput(BaseModel):
-  message: str
+    message: str
 
 class ChatResponse(BaseModel):
-  response: str
+    response: str
 
 dialog_history = []
 
-@app.post("/chat", response_model=ChatResponse)
-async def chat(chat_input: ChatInput):
-  logger.info(f"Received chat input: {chat_input}")
+async def call_groq_api(messages, model):
+    try:
+        chat_completion = await asyncio.to_thread(
+            client.chat.completions.create,
+            messages=messages,
+            model=model
+        )
+        return chat_completion.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Error calling Groq API: {e}")
+        raise HTTPException(status_code=500, detail="Error processing request")
 
-  user_input = chat_input.message
-  docs = db.similarity_search(user_input, k=3)
+async def process_chat(chat_input: ChatInput):
+    user_input = chat_input.message
+    docs = db.similarity_search(user_input, k=3)
 
-  logger.info(f"Found {len(docs)} documents")
+    logger.info(f"Found {len(docs)} documents")
 
-  if len(docs) == 0:
-    return ChatResponse(response="I'm sorry, I don't have that information. But you can send a message to the email in the contact form.")
-  
-  template = """
+    if len(docs) == 0:
+        return "I'm sorry, I don't have that information. But you can send a message to the email in the contact form."
+    
+    template = """
     You are an exceptional customer support chatbot that gently answers questions.
     You know the following context information.
     {chunks_formatted}
@@ -61,9 +64,9 @@ async def chat(chat_input: ChatInput):
 
     Question: {query}
     Answer:
-  """
+    """
 
-  manager_template = """
+    manager_template = """
     You are an exceptional chatbot manager. Your task is to review the text provided by your subordinates. You need to check the grammar and content and correct it to a relevant version.
 
     The happiness of our customers depends on the quality of the text, so make sure the text is clear and does not mix languages. If this happens, you should correct the text to convey the message to the customer clearly.
@@ -83,60 +86,59 @@ async def chat(chat_input: ChatInput):
     Subordinate's text: {text}
 
     Corrected text:
-  """
+    """
 
-  chunks_formatted = "\n".join([f"{i+1}. {doc.page_content}" for i, doc in enumerate(docs)])
-  message = template.format(chunks_formatted=chunks_formatted, query=user_input)
-  models = ["gemma-7b-it", "llama3-70b-8192", "llama3-8b-8192", "mixtral-8x7b-32768", "llama-3.1-405b-reasoning"]
+    chunks_formatted = "\n".join([f"{i+1}. {doc.page_content}" for i, doc in enumerate(docs)])
+    message = template.format(chunks_formatted=chunks_formatted, query=user_input)
+    models = ["gemma-7b-it", "llama3-70b-8192", "llama3-8b-8192", "mixtral-8x7b-32768", "llama-3.1-405b-reasoning"]
 
-  # ----
-  dialog_history.append({
-    'role': 'user',
-    'content': message
-  })
+    dialog_history.append({
+        'role': 'user',
+        'content': message
+    })
 
-  logger.info(f"Send message {message}")
+    logger.info(f"Send message {message}")
 
-  chat_completion = client.chat.completions.create(
-    messages=dialog_history,
-    model=models[1]
-  )
-  response = chat_completion.choices[0].message.content
+    response = await call_groq_api(dialog_history, models[1])
 
-  logger.info(f"Received response {response}")
+    logger.info(f"Received response {response}")
 
-  # ----
+    logger.info(f"Send message to critic: {response}")
+    manager_message = manager_template.format(text=response)
+    dialog_history.append({
+        'role': 'user',
+        'content': manager_message
+    })
 
-  sleep(2)
+    response = await call_groq_api(dialog_history, models[1])
 
-  logger.info(f"Send message to critic: {response}")
-  manager_message = manager_template.format(text=response)
-  dialog_history.append({
-    'role': 'user',
-    'content': manager_message
-  })
+    logger.info(f"Received response {response}")
+    
+    dialog_history.append({
+        'role': 'assistant',
+        'content': response
+    })
 
-  chat_completion = client.chat.completions.create(
-    messages=dialog_history,
-    model=models[1]
-  )
-  response = chat_completion.choices[0].message.content
+    if sum(len(message['content']) for message in dialog_history) > TOKEN_LIMIT:
+        while sum(len(message['content']) for message in dialog_history) > TOKEN_LIMIT:
+            dialog_history.pop(0)
 
-  logger.info(f"Received response {response}")
-  # ----
+    return response
 
-  
-  dialog_history.append({
-    'role': 'assistant',
-    'content': response
-  })
-
-  if sum(len(message['content']) for message in dialog_history) > TOKEN_LIMIT:
-    while sum(len(message['content']) for message in dialog_history) > TOKEN_LIMIT:
-      dialog_history.pop(0)
-
-  return ChatResponse(response=response)
+@app.post("/chat", response_model=ChatResponse)
+async def chat(chat_input: ChatInput, background_tasks: BackgroundTasks):
+    try:
+        task = asyncio.create_task(process_chat(chat_input))
+        background_tasks.add_task(task)
+        response = await asyncio.wait_for(task, timeout=120.0)  # Увеличен таймаут до 2 минут
+        return ChatResponse(response=response)
+    except asyncio.TimeoutError:
+        logger.error("Request timed out")
+        return ChatResponse(response="I'm sorry, but the request is taking longer than expected. Please try again later.")
+    except Exception as e:
+        logger.error(f"Error processing chat request: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 if __name__ == "__main__":
-  import uvicorn
-  uvicorn.run(app, host="0.0.0.0", port=8000)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, timeout_keep_alive=120)
